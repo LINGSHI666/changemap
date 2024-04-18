@@ -24,7 +24,7 @@ const pthread_t THREAD_ID_UNUSED = { 0 };
 // 监控参数结构体
 typedef struct {
     pthread_t threadId;
-    int playerid[MAX_PLAYERS];
+    unsigned long long  playerid[MAX_PLAYERS];
     int count;
 } MonitorArgs;
 
@@ -67,7 +67,7 @@ typedef struct {
     int rank;
     char* name;
     char* platoon;
-    long long playerid;
+    unsigned long long playerid;  // 使用无符号长整型
 } PlayerInfo;
 
 typedef struct {
@@ -132,10 +132,10 @@ int parse_full_server_details(const char* text, FullServerDetails* details) {
 
     result = json_object_get(root, "result");
     serverInfo = json_object_get(result, "serverInfo");
-    details->serverDetails.serverId = _strdup(json_string_value(json_object_get(serverInfo, "guid"))); 
+    details->serverDetails.serverId = _strdup(json_string_value(json_object_get(serverInfo, "guid")));
     details->serverDetails.persistedGameId = _strdup(json_string_value(json_object_get(serverInfo, "gameId")));
 
-    maps = json_object_get(serverInfo, "rotation"); 
+    maps = json_object_get(serverInfo, "rotation");
     if (parse_maps(maps, &details->serverDetails) != 0) {
         json_decref(root);
         return -1; // 解析地图信息失败
@@ -212,7 +212,7 @@ size_t writefunc(void* ptr, size_t size, size_t nmemb, struct string* s) {
 
 // 发送请求并获取响应
 RespContent GetFullServerDetails(const char* sessionId, long long gameId) {
-   
+
     clock_t start_time = clock();
     RespContent respContent = { 0 };
     struct string s;
@@ -225,18 +225,18 @@ RespContent GetFullServerDetails(const char* sessionId, long long gameId) {
         json_object_set_new(root, "jsonrpc", json_string("2.0"));
         json_object_set_new(root, "method", json_string("GameServer.getFullServerDetails"));
 
-        
+
         json_t* params = json_object();
         json_object_set_new(params, "game", json_string("tunguska"));
         json_object_set_new(params, "gameId", json_integer(gameId));
-        json_object_set_new(root, "params", params); 
+        json_object_set_new(root, "params", params);
 
         //UUID
-        char uuid[37]; 
+        char uuid[37];
         generate_uuid_v4(uuid); // 生成uuid
-        json_object_set_new(root, "id", json_string(uuid)); 
+        json_object_set_new(root, "id", json_string(uuid));
 
-       
+
         char* requestData = json_dumps(root, JSON_ENCODE_ANY);
 
         // 设置HTTP头部，包括Session ID
@@ -263,8 +263,8 @@ RespContent GetFullServerDetails(const char* sessionId, long long gameId) {
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, &s);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcurl-agent/1.0");
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers); // Set the headers for the request
-        
-        
+
+
         // 执行请求
         CURLcode res = curl_easy_perform(curl);
         if (res == CURLE_OK) {
@@ -275,15 +275,15 @@ RespContent GetFullServerDetails(const char* sessionId, long long gameId) {
             respContent.content = _strdup(curl_easy_strerror(res));
             respContent.is_success = 0;
         }
-       
+
         // 清理
         free(requestData);
         json_decref(root);
         curl_slist_free_all(headers);
         curl_easy_cleanup(curl);
         free(s.ptr);
-            
-        
+
+
     }
     else {
         free(s.ptr);
@@ -294,7 +294,7 @@ RespContent GetFullServerDetails(const char* sessionId, long long gameId) {
     // 计时结束并返回结果
     clock_t end_time = clock();
     respContent.exec_time = (double)(end_time - start_time) / CLOCKS_PER_SEC;
-   
+
 
     return respContent;
 }
@@ -345,10 +345,10 @@ RespContent RSPChooseLevel(const char* sessionId, const char* persistedGameId, i
 
         // 初始化binuuid数组为0
         memset(&binuuid, 0, sizeof(binuuid));
-       
+
         generate_uuid_v4(uuid);
         srand((unsigned int)time(NULL)); // 初始化随机数生成器
-        
+
 
         json_object_set_new(root, "id", json_string(uuid));
 
@@ -368,8 +368,8 @@ RespContent RSPChooseLevel(const char* sessionId, const char* persistedGameId, i
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&respContent);
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
 
-       
-        CURLcode res = curl_easy_perform(curl); 
+
+        CURLcode res = curl_easy_perform(curl);
         if (res != CURLE_OK) {
             fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
             // 检查错误代码
@@ -400,7 +400,7 @@ RespContent RSPChooseLevel(const char* sessionId, const char* persistedGameId, i
         curl_easy_cleanup(curl);
         curl_slist_free_all(headers);
         json_decref(root);
-        
+
     }
 
     clock_t end_time = clock();
@@ -421,11 +421,11 @@ size_t WriteMemoryCallback(void* contents, size_t size, size_t nmemb, struct Mem
         return 0;  // 返回0
     }
     userp->memory = ptr;  // 更新内存指针
-    memcpy(&(userp->memory[userp->size]), contents, realsize);  
-    userp->size += realsize;  
-    userp->memory[userp->size] = '\0';  
+    memcpy(&(userp->memory[userp->size]), contents, realsize);
+    userp->size += realsize;
+    userp->memory[userp->size] = '\0';
 
-    return realsize;  
+    return realsize;
 }
 
 void httpGetRequest(const char* url, struct MemoryStruct* chunk) {
@@ -457,12 +457,12 @@ ServerInfoRoot* parse_server_info(const char* json_text) {
         return NULL;
     }
 
-    
+
     serverInfo->name = _strdup(json_string_value(json_object_get(root, "name")));
     serverInfo->description = _strdup(json_string_value(json_object_get(root, "description")));
     serverInfo->region = _strdup(json_string_value(json_object_get(root, "region")));
 
-   
+
     json_t* teams = json_object_get(root, "teams");
     serverInfo->team_count = json_array_size(teams);
     serverInfo->teams = malloc(sizeof(TeamInfo) * serverInfo->team_count);
@@ -478,7 +478,22 @@ ServerInfoRoot* parse_server_info(const char* json_text) {
             json_t* player = json_array_get(players, j);
             serverInfo->teams[i].players[j].name = _strdup(json_string_value(json_object_get(player, "name")));
             serverInfo->teams[i].players[j].rank = json_integer_value(json_object_get(player, "rank"));
-            serverInfo->teams[i].players[j].playerid = json_integer_value(json_object_get(player, "player_id"));
+
+            // 处理 player_id 为无符号长整型
+            json_t* player_id_json = json_object_get(player, "player_id");
+            json_int_t temp_id = json_integer_value(player_id_json);
+            unsigned long long player_id = 0;
+
+            if (temp_id < 0) {
+
+                // 并转换逻辑
+                player_id = (unsigned long long)((json_int_t)(-1) - temp_id + 1);
+            }
+            else {
+                player_id = (unsigned long long)temp_id;
+            }
+
+            serverInfo->teams[i].players[j].playerid = player_id;
             serverInfo->teams[i].players[j].platoon = _strdup(json_string_value(json_object_get(player, "platoon")));
         }
     }
@@ -502,7 +517,7 @@ void printPlayerList(ServerInfoRoot* serverInfo) {
         printf("\nTeam: %s\n", serverInfo->teams[i].name);
         for (size_t j = 0; j < serverInfo->teams[i].player_count; j++) {
             PlayerInfo player = serverInfo->teams[i].players[j];
-            printf("Player Name: %s, Rank: %d, Platoon: %s , playerid:%d\n", player.name, player.rank, player.platoon,player.playerid);
+            printf("Player Name: %s, Rank: %d, Platoon: %s , playerid:%lld\n", player.name, player.rank, player.platoon, player.playerid);
         }
     }
 }
@@ -525,7 +540,7 @@ void free_server_info(ServerInfoRoot* serverInfo) {
     free(serverInfo->teams);
     free(serverInfo);
 }
- 
+
 
 
 
@@ -539,7 +554,7 @@ int get_game_count(const char* sessionId, long long personaId) {
     CURL* curl;
     CURLcode res;
     struct MemoryStruct chunk;
-    init_memory_struct(&chunk);
+    init_memory_struct(&chunk); // 确保此函数正确初始化chunk结构
 
     curl = curl_easy_init();
     if (curl) {
@@ -554,23 +569,32 @@ int get_game_count(const char* sessionId, long long personaId) {
         curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, WriteMemoryCallback);
         curl_easy_setopt(curl, CURLOPT_WRITEDATA, (void*)&chunk);
         curl_easy_setopt(curl, CURLOPT_USERAGENT, "libcurl-agent/1.0");
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 3L); // 设置超时为3秒
+
         char sessionHeader[256];
         snprintf(sessionHeader, sizeof(sessionHeader), "X-GatewaySession: %s", sessionId);
         struct curl_slist* headers = NULL;
         headers = curl_slist_append(headers, sessionHeader);
         headers = curl_slist_append(headers, "Content-Type: application/json");
         curl_easy_setopt(curl, CURLOPT_HTTPHEADER, headers);
-        //curl_easy_setopt(curl, CURLOPT_VERBOSE, 1L);//输出调试信息
+
         res = curl_easy_perform(curl);
         if (res != CURLE_OK) {
             fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+            // 当发生超时时，清理cURL并返回0
+            if (res == CURLE_OPERATION_TIMEDOUT) {
+                curl_easy_cleanup(curl);
+                curl_slist_free_all(headers);
+                free(chunk.memory);
+                return 0;
+            }
         }
 
         curl_easy_cleanup(curl);
         curl_slist_free_all(headers);
     }
 
-    // 解析JSON响应
+    // 没有超时，继续解析JSON
     int roundsPlayed = 0;
     json_error_t error;
     json_t* root = json_loads(chunk.memory, 0, &error);
@@ -578,9 +602,14 @@ int get_game_count(const char* sessionId, long long personaId) {
         json_t* result = json_object_get(root, "result");
         if (result) {
             json_t* roundsPlayedJson = json_object_get(result, "roundsPlayed");
-            roundsPlayed = json_integer_value(roundsPlayedJson);
+            if (roundsPlayedJson) {
+                roundsPlayed = json_integer_value(roundsPlayedJson);
+            }
         }
         json_decref(root);
+    }
+    else {
+        fprintf(stderr, "JSON parsing failed on line %d: %s\n", error.line, error.text);
     }
 
     free(chunk.memory);
@@ -633,6 +662,7 @@ void fetchAndDisplayTopPlayers(MonitorArgs* args) {
     httpGetRequest(url, &chunk); // 使用全局变量url
     if (chunk.memory) {
         ServerInfoRoot* serverInfo = parse_server_info(chunk.memory);
+        //printPlayerList(serverInfo);
         if (serverInfo) {
             // 初始化计数器
             int playerIndex = 0;
@@ -683,13 +713,19 @@ void* monitor_players(void* arg) {
     while (difftime(time(NULL), start_time) < 30 && liveflag) {
         int increasedCount = 0;
         for (int i = 0; i < args->count; i++) {
-            int currentGameCount = get_game_count(sessionId, args->playerid[i]);
-            if (currentGameCount) {
-                printf("%d\n", currentGameCount);
-            }
-            if (initialCounts[i] < currentGameCount) {
-                increasedCount++;
-            }
+            int retry = 1;
+            int retrytime = 0;
+            do {
+                int currentGameCount = get_game_count(sessionId, args->playerid[i]);
+                if (currentGameCount) {
+                    printf("%d\n", currentGameCount);
+                    break;
+                }
+                if (initialCounts[i] < currentGameCount) {
+                 increasedCount++;
+                 }
+                retry++;
+            } while (retrytime<=retry);
         }
         if (!liveflag) {
             break;
@@ -716,9 +752,9 @@ void* monitor_players(void* arg) {
 
 // 控制线程函数
 void* thread_controller(void* arg) {
-    while (jiankongflag != 2) 
+    while (jiankongflag != 2)
     {
-        pthread_mutex_lock(&lock); 
+        pthread_mutex_lock(&lock);
         if (createflag) {
             if (activeThreads < MAX_THREADS) {
                 for (int i = 0; i < MAX_THREADS; i++) {
@@ -756,14 +792,15 @@ int main(void) {
 #ifdef _WIN32
     system("chcp 65001");
 #endif
-   
-    
-    
+
+
+
+
     printf("请输入你的sessionId，可以在服管工具中获取：");
     scanf_s("%99s", sessionId, (unsigned)_countof(sessionId));
 
     long long gameID;  // 用于存储游戏ID
-    
+
     long long personaId = 1779148883;
     int gameCount = get_game_count(sessionId, personaId);
     if (gameCount > 1000)
@@ -774,7 +811,7 @@ int main(void) {
     {
         printf("sessionId无效\n");
     }
-    
+
     // 提示输入gameID
     printf("请输入gameID: ");
     if (scanf_s("%lld", &gameID) != 1) {
@@ -785,22 +822,22 @@ int main(void) {
     // 格式化URL
     sprintf_s(url, sizeof(url), "https://api.gametools.network/bf1/players/?gameid=%lld", gameID);
 
-  
+
     //在windows上设置编码格式
-    
-   
-    
+
+
+
     RespContent resp = GetFullServerDetails(sessionId, gameID);
-    
-   
-    
+
+
+
     FullServerDetails fullDetails;
     char* serverId = NULL;
     if (resp.is_success) {
         if (parse_full_server_details(resp.content, &fullDetails) == 0) {
             printf("JSON解析成功！\n");
             printf("Server ID: %s\n", fullDetails.serverDetails.serverId);
-            
+
             if (fullDetails.serverDetails.serverId != NULL) {
                 serverId = _strdup(fullDetails.serverDetails.serverId); // 复制字符串
             }
@@ -824,24 +861,24 @@ int main(void) {
     }
 
     printf("Request execution time: %.2f seconds\n", resp.exec_time);
-    
+
     // 释放响应内容内存
     free(resp.content);
-    
+
     const char* team1 = "TeamA";
     const char* team2 = "TeamB";
 
     printf("1111111111111111111111111111111111111111\n");
     // 调用封装好的函数来获取数据
 //fetchAndDisplayTopPlayers(url, team1, team2);
-    
+
 
     char input[100];
-    int numbers[50];  
-    int count = 0;    
-    int num;         
+    int numbers[50];
+    int count = 0;
+    int num;
     printf("请在换图机启动前确保当前地图为列表首图\n");
-    printf("请输入以逗号分隔的地图数字编号序列：");
+    printf("请输入以逗号分隔的地图数字编号序列，例如3,1,2,45,23;");
     // 清空输入缓冲区
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
@@ -853,17 +890,17 @@ int main(void) {
     token = strtok_s(input, ",", &nextToken);
     while (token != NULL) {
         sscanf_s(token, "%d", &num);  // 将字符串转换为整数
-        numbers[count] = num;         
+        numbers[count] = num;
         count++;
         token = strtok_s(NULL, ",", &nextToken);
     }
 
     printf("您输入的数字是：");
     for (int i = 0; i < count; i++) {
-        printf("%d ", numbers[i]);  
+        printf("%d ", numbers[i]);
     }
     printf("\n");
-    
+
     int mapcount = 1;
     int mapid = 0;
     pthread_t controllerThread;
@@ -876,6 +913,7 @@ int main(void) {
     }
 
     pthread_create(&controllerThread, NULL, thread_controller, NULL);
+    printf("换图即已启动，下一张地图id为：%d", numbers[mapcount % count]);
     // 换图逻辑
     do {
 #ifdef _WIN32
@@ -913,7 +951,7 @@ int main(void) {
             liveflag = 1;
             jiankongflag = 0;
             createflag = 1;
-            
+
         }
         pthread_mutex_unlock(&lock);
 
@@ -930,29 +968,29 @@ int main(void) {
 
 
 
-    
+
     struct MemoryStruct chunk = { 0 };
-    
-        
-     httpGetRequest(url, &chunk);
-            if (chunk.memory) {
-                ServerInfoRoot* serverInfo = parse_server_info(chunk.memory);
-                if (serverInfo) {
-                    printPlayerList(serverInfo);
-                    free_server_info(serverInfo);
-                }
-                free(chunk.memory);
-            }
-        
 
-        RespContent respR = RSPChooseLevel(sessionId,serverId, mapid);
-        printf("Is Success: %d\n", respR.is_success);
-        printf("内容: %s\n", respR.content);
-        printf("Execution Time: %.2f seconds\n", respR.exec_time);
 
-        free(respR.content);
+    httpGetRequest(url, &chunk);
+    if (chunk.memory) {
+        ServerInfoRoot* serverInfo = parse_server_info(chunk.memory);
+        if (serverInfo) {
+            printPlayerList(serverInfo);
+            free_server_info(serverInfo);
+        }
+        free(chunk.memory);
+    }
+
+
+    RespContent respR = RSPChooseLevel(sessionId, serverId, mapid);
+    printf("Is Success: %d\n", respR.is_success);
+    printf("内容: %s\n", respR.content);
+    printf("Execution Time: %.2f seconds\n", respR.exec_time);
+
+    free(respR.content);
 #ifdef _WIN32
-        system("chcp 936");
+    system("chcp 936");
 #endif
     return 0;
 }
