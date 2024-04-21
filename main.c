@@ -5,19 +5,30 @@
 #include <stdlib.h>
 #include <curl/curl.h>
 #include <jansson.h>
-#include <string.h> 
+#include <string.h>
 #include <time.h>
-#include <ctype.h> 
+#include <ctype.h>
 #include <wchar.h>
 #include <locale.h>
 
-#define MAX_PLAYERS 10  
+#define MAX_PLAYERS 10
 #define MAX_THREADS 10
-//区分操作系统
+
+
+// 区分操作系统
 #ifdef _WIN32
 #include <windows.h>
-#endif
 
+#else
+#include <unistd.h>
+#include <uuid/uuid.h>
+#define _strdup strdup
+#define sprintf_s snprintf
+#define strtok_s strtok_r
+#define scanf_s scanf
+#define sscanf_s sscanf
+#define _countof(arr) (sizeof(arr) / sizeof(arr[0]))
+#endif
 // 定义一个未使用的线程ID的常量
 const pthread_t THREAD_ID_UNUSED = { 0 };
 
@@ -25,6 +36,7 @@ const pthread_t THREAD_ID_UNUSED = { 0 };
 typedef struct {
     pthread_t threadId;
     unsigned long long  playerid[MAX_PLAYERS];
+    unsigned int teamid[MAX_PLAYERS];
     int count;
 } MonitorArgs;
 
@@ -38,6 +50,7 @@ int activeThreads = 0;
 int liveflag = 1;
 int jiankongflag = 0;
 int createflag = 1;
+int operation = 0;
 
 typedef struct {
     char* mapPrettyName;
@@ -161,6 +174,11 @@ void free_full_server_details(FullServerDetails* details) {
 
 //uuid生成
 void generate_uuid_v4(char* uuid) {
+#ifdef __linux__
+    uuid_t binuuid;
+    uuid_generate_random(binuuid);
+    uuid_unparse(binuuid, uuid);
+#else
     // 生成一个包含128位随机数的数组
     unsigned char uuid_bytes[16];
     for (int i = 0; i < 16; i++) {
@@ -180,6 +198,7 @@ void generate_uuid_v4(char* uuid) {
         uuid_bytes[4], uuid_bytes[5], uuid_bytes[6], uuid_bytes[7],
         uuid_bytes[8], uuid_bytes[9], uuid_bytes[10], uuid_bytes[11],
         uuid_bytes[12], uuid_bytes[13], uuid_bytes[14], uuid_bytes[15]);
+#endif
 }
 
 
@@ -321,7 +340,7 @@ size_t write_callback(void* contents, size_t size, size_t nmemb, void* userp) {
 }
 
 
-// 发送HTTP POST请求并处理响应
+// 换图
 RespContent RSPChooseLevel(const char* sessionId, const char* persistedGameId, int levelIndex) {
     clock_t start_time = clock();
     RespContent respContent;
@@ -441,52 +460,143 @@ void httpGetRequest(const char* url, struct MemoryStruct* chunk) {
         curl_easy_cleanup(curl);
     }
 }
+// 释放 ServerInfoRoot 结构体的内存
+void free_server_info_error(ServerInfoRoot* serverInfo) {
+    if (!serverInfo) return;
 
+    if (serverInfo->name) free(serverInfo->name);
+    if (serverInfo->description) free(serverInfo->description);
+    if (serverInfo->region) free(serverInfo->region);
+
+    for (size_t i = 0; i < serverInfo->team_count; i++) {
+        if (serverInfo->teams[i].name) free(serverInfo->teams[i].name);
+        for (size_t j = 0; j < serverInfo->teams[i].player_count; j++) {
+            if (serverInfo->teams[i].players[j].name) free(serverInfo->teams[i].players[j].name);
+            if (serverInfo->teams[i].players[j].platoon) free(serverInfo->teams[i].players[j].platoon);
+        }
+        if (serverInfo->teams[i].players) free(serverInfo->teams[i].players);
+    }
+
+    if (serverInfo->teams) free(serverInfo->teams);
+    free(serverInfo);
+}
 // JSON 解析函数
 ServerInfoRoot* parse_server_info(const char* json_text) {
+    printf("0 ok\n");
     json_error_t error;
     json_t* root = json_loads(json_text, 0, &error);
     if (!root) {
         fprintf(stderr, "error: on line %d: %s\n", error.line, error.text);
         return NULL;
     }
-    // 创建并填充 ServerInfoRoot 结构
+
     ServerInfoRoot* serverInfo = malloc(sizeof(ServerInfoRoot));
     if (!serverInfo) {
         json_decref(root);
         return NULL;
     }
 
+    serverInfo->name = NULL;
+    serverInfo->description = NULL;
+    serverInfo->region = NULL;
+    serverInfo->teams = NULL;
 
-    serverInfo->name = _strdup(json_string_value(json_object_get(root, "name")));
-    serverInfo->description = _strdup(json_string_value(json_object_get(root, "description")));
-    serverInfo->region = _strdup(json_string_value(json_object_get(root, "region")));
+    const char* name = json_string_value(json_object_get(root, "name"));
+    serverInfo->name = name ? _strdup(name) : NULL;
+    if (name && !serverInfo->name) {
+        fprintf(stderr, "error: strdup failed for name\n");
+        free_server_info_error(serverInfo);
+        json_decref(root);
+        return NULL;
+    }
+    printf("1 ok\n");
 
+    const char* description = json_string_value(json_object_get(root, "description"));
+    serverInfo->description = description ? _strdup(description) : NULL;
+    if (description && !serverInfo->description) {
+        fprintf(stderr, "error: strdup failed for description\n");
+        free_server_info_error(serverInfo);
+        json_decref(root);
+        return NULL;
+    }
+    printf("2 ok\n");
+
+    const char* region = json_string_value(json_object_get(root, "region"));
+    serverInfo->region = region ? _strdup(region) : NULL;
+    if (region && !serverInfo->region) {
+        fprintf(stderr, "error: strdup failed for region\n");
+        free_server_info_error(serverInfo);
+        json_decref(root);
+        return NULL;
+    }
+    printf("3 ok\n");
 
     json_t* teams = json_object_get(root, "teams");
+    if (!teams || !json_is_array(teams)) {
+        fprintf(stderr, "error: teams is not an array\n");
+        free_server_info_error(serverInfo);
+        json_decref(root);
+        return NULL;
+    }
     serverInfo->team_count = json_array_size(teams);
     serverInfo->teams = malloc(sizeof(TeamInfo) * serverInfo->team_count);
+    if (!serverInfo->teams) {
+        fprintf(stderr, "error: malloc failed for teams\n");
+        free_server_info_error(serverInfo);
+        json_decref(root);
+        return NULL;
+    }
 
     for (size_t i = 0; i < serverInfo->team_count; i++) {
         json_t* team = json_array_get(teams, i);
-        serverInfo->teams[i].name = _strdup(json_string_value(json_object_get(team, "name")));
+        if (!team || !json_is_object(team)) {
+            fprintf(stderr, "error: team is not an object\n");
+            continue;  // Skip this invalid team
+        }
+        const char* teamid = json_string_value(json_object_get(team, "teamid"));
+        serverInfo->teams[i].name = teamid ? _strdup(teamid) : NULL;
+        if (teamid && !serverInfo->teams[i].name) {
+            fprintf(stderr, "error: strdup failed for teamid\n");
+            continue;  // Skip this invalid teamid allocation
+        }
+        printf("4 ok\n");
+
         json_t* players = json_object_get(team, "players");
+        if (!players || !json_is_array(players)) {
+            fprintf(stderr, "error: players is not an array\n");
+            serverInfo->teams[i].player_count = 0;
+            serverInfo->teams[i].players = NULL;
+            continue;  // Skip this invalid players array
+        }
         serverInfo->teams[i].player_count = json_array_size(players);
         serverInfo->teams[i].players = malloc(sizeof(PlayerInfo) * serverInfo->teams[i].player_count);
+        if (!serverInfo->teams[i].players) {
+            fprintf(stderr, "error: malloc failed for players\n");
+            serverInfo->teams[i].player_count = 0;
+            continue;  // Skip this invalid players allocation
+        }
 
         for (size_t j = 0; j < serverInfo->teams[i].player_count; j++) {
             json_t* player = json_array_get(players, j);
-            serverInfo->teams[i].players[j].name = _strdup(json_string_value(json_object_get(player, "name")));
+            if (!player || !json_is_object(player)) {
+                fprintf(stderr, "error: player is not an object\n");
+                continue;  // Skip this invalid player
+            }
+            const char* player_name = json_string_value(json_object_get(player, "name"));
+            serverInfo->teams[i].players[j].name = player_name ? _strdup(player_name) : NULL;
+            if (player_name && !serverInfo->teams[i].players[j].name) {
+                fprintf(stderr, "error: strdup failed for player_name\n");
+                continue;  // Skip this invalid player_name allocation
+            }
+            printf("5 ok\n");
+
             serverInfo->teams[i].players[j].rank = json_integer_value(json_object_get(player, "rank"));
 
-            // 处理 player_id 为无符号长整型
             json_t* player_id_json = json_object_get(player, "player_id");
             json_int_t temp_id = json_integer_value(player_id_json);
             unsigned long long player_id = 0;
 
             if (temp_id < 0) {
-
-                // 并转换逻辑
                 player_id = (unsigned long long)((json_int_t)(-1) - temp_id + 1);
             }
             else {
@@ -494,14 +604,20 @@ ServerInfoRoot* parse_server_info(const char* json_text) {
             }
 
             serverInfo->teams[i].players[j].playerid = player_id;
-            serverInfo->teams[i].players[j].platoon = _strdup(json_string_value(json_object_get(player, "platoon")));
+
+            const char* platoon = json_string_value(json_object_get(player, "platoon"));
+            serverInfo->teams[i].players[j].platoon = platoon ? _strdup(platoon) : NULL;
+            if (platoon && !serverInfo->teams[i].players[j].platoon) {
+                fprintf(stderr, "error: strdup failed for platoon\n");
+                continue;  // Skip this invalid platoon allocation
+            }
+            printf("6 ok\n");
         }
     }
 
     json_decref(root);
     return serverInfo;
 }
-
 void* threadFunction(void* arg) {
     // 线程代码
     return NULL;
@@ -669,8 +785,9 @@ void fetchAndDisplayTopPlayers(MonitorArgs* args) {
 
             for (size_t i = 0; i < serverInfo->team_count && playerIndex < MAX_PLAYERS; i++) {
                 // 通过硬编码的队伍名称检索特定的队伍
-                if (strcmp(serverInfo->teams[i].name, "teamOne") == 0 || strcmp(serverInfo->teams[i].name, "teamTwo"))
+                if (strcmp(serverInfo->teams[i].name, "teamOne")  || strcmp(serverInfo->teams[i].name, "teamTwo" ))
                 {
+                    printf("%s", serverInfo->teams[i].name);
                     // 对该队伍的玩家按照排名降序排序
                     qsort(serverInfo->teams[i].players, serverInfo->teams[i].player_count, sizeof(PlayerInfo), comparePlayersByRank);
 
@@ -678,6 +795,16 @@ void fetchAndDisplayTopPlayers(MonitorArgs* args) {
                     for (size_t j = 0; j < 3 && j < serverInfo->teams[i].player_count && playerIndex < MAX_PLAYERS; j++) {
                         PlayerInfo player = serverInfo->teams[i].players[j];
                         args->playerid[playerIndex++] = player.playerid; // 填充玩家ID
+                        if (strcmp(serverInfo->teams[i].name, "teamOne"))
+                        {
+                            args->teamid[j] = 1;
+                            printf("teamid 1 ok \n");
+                        }
+                        else if (strcmp(serverInfo->teams[i].name, "teamTwo"))
+                        {
+                            args->teamid[j] = 2;
+                            printf("teamid 2 ok \n");
+                        }
                         //printf("Added player with ID %d to args->playerid[%d]\n", player.playerid, playerIndex - 1); // 打印添加的玩家ID
                     }
                 }
@@ -703,28 +830,36 @@ void* monitor_players(void* arg) {
 
     MonitorArgs* args = &monitorArgsArray[index];
     fetchAndDisplayTopPlayers(args);
-
+    if (args->count == 0)
+    {
+        printf("no player");
+        return NULL;
+    }
     int initialCounts[MAX_PLAYERS] = { 0 };
     for (int i = 0; i < args->count; i++) {
-        initialCounts[i] = get_game_count(sessionId, args->playerid[i]);
+        do {
+          initialCounts[i] = get_game_count(sessionId, args->playerid[i]);
+        } while (!initialCounts[i]);
     }
 
     time_t start_time = time(NULL);
     while (difftime(time(NULL), start_time) < 30 && liveflag) {
         int increasedCount = 0;
         for (int i = 0; i < args->count; i++) {
-            int retry = 1;
+            int retry = 2;
             int retrytime = 0;
             do {
                 int currentGameCount = get_game_count(sessionId, args->playerid[i]);
+               
+               
                 if (currentGameCount) {
                     printf("%d\n", currentGameCount);
+                    if (initialCounts[i] < currentGameCount) {
+                        increasedCount++;
+                    }
                     break;
                 }
-                if (initialCounts[i] < currentGameCount) {
-                 increasedCount++;
-                 }
-                retry++;
+                retrytime++;
             } while (retrytime<=retry);
         }
         if (!liveflag) {
@@ -797,8 +932,11 @@ int main(void) {
 
 
     printf("请输入你的sessionId，可以在服管工具中获取：");
+#ifdef _WIN32
     scanf_s("%99s", sessionId, (unsigned)_countof(sessionId));
-
+#else
+    scanf("%99s", sessionId);
+#endif
     long long gameID;  // 用于存储游戏ID
 
     long long personaId = 1779148883;
@@ -814,10 +952,18 @@ int main(void) {
 
     // 提示输入gameID
     printf("请输入gameID: ");
+#ifdef _WIN32
     if (scanf_s("%lld", &gameID) != 1) {
         printf("输入错误，请输入一个有效的数字。\n");
         return 1;  // 非法输入，提前结束程序
     }
+#else
+    if(scanf("%lld", &gameID) !=1){
+        printf("输入错误，请输入一个有效的数字。\n");
+        return 1;  // 非法输入，提前结束程序
+    }
+#endif
+    
 
     // 格式化URL
     sprintf_s(url, sizeof(url), "https://api.gametools.network/bf1/players/?gameid=%lld", gameID);
@@ -883,7 +1029,12 @@ int main(void) {
     int c;
     while ((c = getchar()) != '\n' && c != EOF);
 
+#ifdef _WIN32
     scanf_s("%99[^\n]", input, (unsigned)_countof(input));  // 读取用户输入
+#else
+    scanf("%99[^\n]", input);  // 读取用户输入
+#endif
+
 
     char* token;
     char* nextToken;
@@ -906,13 +1057,14 @@ int main(void) {
     pthread_t controllerThread;
     pthread_mutex_init(&lock, NULL);
     pthread_cond_init(&cond, NULL);
-
+    printf("线程锁初始化成功\n");
     // 初始化线程ID数组
     for (int i = 0; i < MAX_THREADS; i++) {
         monitorArgsArray[i].threadId = THREAD_ID_UNUSED;
     }
 
     pthread_create(&controllerThread, NULL, thread_controller, NULL);
+    printf("监控线程启动成功\n");
     printf("换图即已启动，下一张地图id为：%d", numbers[mapcount % count]);
     // 换图逻辑
     do {
