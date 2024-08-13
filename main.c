@@ -1323,6 +1323,22 @@ void* monitor_players(void* arg) {
         for (int i = 0; i < args->count; i++) {
             int retry = 2;
             int retrytime = 0;
+            do
+            {
+                if (get_playerplaying(sessionId, args->playerid[i]))
+                {
+                    break;
+                }
+                retrytime++;
+            } while (retrytime <= retry);
+            if (retrytime > retry)
+            { 
+                updatePlayerIdToZeroInCache(args->playerid[i]);//更新缓存
+                printf("一个玩家离开了服务器");
+                continue;
+            }
+            retry = 2;
+            retrytime = 0;
             do {
                 if (get_playerplaying(sessionId, args->playerid[i])) {
                     break;
@@ -1354,6 +1370,7 @@ void* monitor_players(void* arg) {
                             team1winincount--;
                         }
                     }
+                   
                     break;
                 }
                 retrytime++;
